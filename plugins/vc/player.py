@@ -28,7 +28,8 @@ import ffmpeg
 
 group_call = GroupCall(None, path_to_log_file='')
 playlist = []
-track_starttime = None
+m_playlist = {}
+track_start = {}
 
 USERBOT_HELP = f"""{emoji.LABEL}  **Common Commands**:
 __available to group members of current voice chat__
@@ -132,8 +133,7 @@ async def play_track(client, m: Message):
             DEFAULT_DOWNLOAD_DIR,
             f"{playlist[0].audio.file_unique_id}.raw"
         )
-        global track_starttime
-        track_starttime = datetime.utcnow().replace(microsecond=0)
+        track_start['time'] = datetime.utcnow().replace(microsecond=0)
         await m_status.delete()
         print(f"- START PLAYING: {playlist[0].audio.title}")
         await pin_current_audio()
@@ -147,13 +147,12 @@ async def play_track(client, m: Message):
                    & filters.regex("^(\\/|!)current$"))
 @init_client_for_group_call
 async def show_current_playing_time(client, m: Message):
-    global track_starttime
-    if not track_starttime:
+    if not track_start['time']:
         await m.reply_text(f"{emoji.PLAY_BUTTON} unknown")
         return
     utcnow = datetime.utcnow().replace(microsecond=0)
     await playlist[0].reply_text(
-        f"{emoji.PLAY_BUTTON}  {utcnow - track_starttime} / "
+        f"{emoji.PLAY_BUTTON}  {utcnow - track_start['time']} / "
         f"{timedelta(seconds=playlist[0].audio.duration)}",
         disable_notification=True
     )
@@ -191,7 +190,8 @@ async def skip_track(client, m: Message):
             await m.reply_text("\n".join(text))
             await send_playlist()
         except (ValueError, TypeError):
-            await m.reply_text(f"{emoji.NO_ENTRY} invalid input")
+            await m.reply_text(f"{emoji.NO_ENTRY} invalid input",
+                               disable_web_page_preview=True)
 
 
 @Client.on_message(main_filter
@@ -212,9 +212,8 @@ async def join_group_call(client, m: Message):
                    & filters.regex("^!leave$"))
 @init_client_for_group_call
 async def leave_voice_chat(client, m: Message):
-    global playlist
     await group_call.stop()
-    playlist = []
+    playlist.clear()
     await m.reply_text(f"{emoji.ROBOT} left the voice chat")
 
 
@@ -240,11 +239,10 @@ async def list_voice_chat(client, m: Message):
                    & filters.regex("^!stop$"))
 @init_client_for_group_call
 async def stop_playing(_, m: Message):
-    global track_starttime, playlist
     group_call.stop_playout()
     await m.reply_text(f"{emoji.STOP_BUTTON} stopped playing")
-    track_starttime = None
-    playlist = []
+    track_start['time'] = None
+    playlist.clear()
 
 
 @Client.on_message(main_filter
@@ -256,8 +254,7 @@ async def restart_playing(client, m: Message):
     if not playlist:
         return
     group_call.restart_playout()
-    global track_starttime
-    track_starttime = datetime.utcnow().replace(microsecond=0)
+    track_start['time'] = datetime.utcnow().replace(microsecond=0)
     await m.reply_text(
         f"{emoji.COUNTERCLOCKWISE_ARROWS_BUTTON}  "
         "playing from the beginning..."
@@ -310,7 +307,13 @@ async def unmute(_, m: Message):
 async def send_text(text):
     client = group_call.client
     chat_id = int("-100" + str(group_call.full_chat.id))
-    await client.send_message(chat_id, text, disable_web_page_preview=True)
+    message = await client.send_message(
+        chat_id,
+        text,
+        disable_web_page_preview=True,
+        disable_notification=True
+    )
+    return message
 
 
 async def send_playlist():
@@ -325,15 +328,16 @@ async def send_playlist():
             f"**{i}**. **[{x.audio.title}]({x.link})**"
             for i, x in enumerate(playlist)
         ])
-    await send_text(pl)
+    if 'message' in m_playlist and m_playlist['message']:
+        await m_playlist['message'].delete()
+    m_playlist['message'] = await send_text(pl)
 
 
 async def skip_current_playing():
-    global track_starttime
     if not playlist:
         return
     if len(playlist) == 1:
-        track_starttime = datetime.utcnow().replace(microsecond=0)
+        track_start['time'] = datetime.utcnow().replace(microsecond=0)
         return
     client = group_call.client
     download_dir = os.path.join(client.workdir, DEFAULT_DOWNLOAD_DIR)
@@ -341,7 +345,7 @@ async def skip_current_playing():
         download_dir,
         f"{playlist[1].audio.file_unique_id}.raw"
     )
-    track_starttime = datetime.utcnow().replace(microsecond=0)
+    track_start['time'] = datetime.utcnow().replace(microsecond=0)
     # remove old track from playlist
     old_track = playlist.pop(0)
     print(f"- START PLAYING: {playlist[0].audio.title}")
